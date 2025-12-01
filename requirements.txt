@@ -1,1 +1,6 @@
-# Placeholder, real dependencies will be added later.
+fastapi
+uvicorn
+psutil
+torch
+transformers
+llama-cpp-python
