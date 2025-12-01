@@ -3,4 +3,4 @@ uvicorn
 psutil
 torch
 transformers
-llama-cpp-python
+
