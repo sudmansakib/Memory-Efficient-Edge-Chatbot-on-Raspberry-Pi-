@@ -20,7 +20,8 @@ class HFBackend:
         self.max_ctx = max_ctx
 
         # Always CPU on Pi; allow override for laptop.
-        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = device or "cpu"
+
 
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
         self.model = AutoModelForCausalLM.from_pretrained(model_name)
