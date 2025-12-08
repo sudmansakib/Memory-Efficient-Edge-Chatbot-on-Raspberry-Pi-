@@ -93,8 +93,9 @@ class HFBackend:
             logits = outputs.logits[:, -1, :]
             past_kv = outputs.past_key_values
 
-            if kv_cache is not None:
+            if hasattr(kv_cache, "store"):
                 kv_cache.store(past_kv)
+
 
         generated_ids = []
 
@@ -102,8 +103,9 @@ class HFBackend:
         for _ in range(max_new_tokens):
 
             # Retrieve quantized KV if used
-            if kv_cache is not None:
+            if hasattr(kv_cache, "get"):
                 past_kv = kv_cache.get()
+
                 if past_kv is None:
                     break
 
@@ -125,7 +127,8 @@ class HFBackend:
                 logits = outputs.logits[:, -1, :]
                 past_kv = outputs.past_key_values
 
-                if kv_cache is not None:
+                if hasattr(kv_cache, "store"):
                     kv_cache.store(past_kv)
+
 
         return self.decode(generated_ids)
