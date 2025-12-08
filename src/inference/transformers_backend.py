@@ -46,12 +46,22 @@ class HFBackend:
         temperature: float = 0.8,
         top_p: float = 0.95,
     ) -> str:
-        inputs = self.tokenizer(prompt, return_tensors="pt", truncation=True)
-        input_ids = inputs["input_ids"].to(self.device)
 
+        # Build tokenizer inputs (this includes attention_mask)
+        inputs = self.tokenizer(
+            prompt,
+            return_tensors="pt",
+            truncation=True
+        )
+
+        input_ids = inputs["input_ids"].to(self.device)
+        attention_mask = inputs["attention_mask"].to(self.device)
+
+        # Run generation
         with torch.no_grad():
             output_ids = self.model.generate(
                 input_ids=input_ids,
+                attention_mask=attention_mask,   # Fixes HF warning
                 max_new_tokens=max_new_tokens,
                 do_sample=True,
                 temperature=temperature,
@@ -59,6 +69,6 @@ class HFBackend:
                 pad_token_id=self.tokenizer.eos_token_id,
             )
 
-        # Return only the newly generated part
-        gen_ids = output_ids[0, input_ids.shape[-1] :]
+        # Extract only the newly-generated portion
+        gen_ids = output_ids[0, input_ids.shape[-1]:]
         return self.decode(gen_ids)

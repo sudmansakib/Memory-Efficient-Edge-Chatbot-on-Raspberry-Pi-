@@ -17,6 +17,7 @@ if CURRENT_DIR not in sys.path:
 from inference.transformers_backend import HFBackend
 from kv_cache.sliding_window import SlidingWindowCache
 from kv_cache.paged_cache import PagedCache
+from kv_cache.quantized_kv_cache import QuantizedKVCache   # <-- NEW
 from utils.logger import JsonlLogger
 from utils.metrics import snapshot as metrics_snapshot
 
@@ -29,7 +30,10 @@ def build_cache(cache_type: str, max_ctx: int) -> Optional[object]:
         return SlidingWindowCache(max_tokens=max_ctx)
     if cache_type == "paged":
         return PagedCache(max_turns=6, max_tokens=max_ctx)
+    if cache_type == "quantized":
+        return QuantizedKVCache()   # <-- NEW
     raise ValueError(f"Unknown cache type: {cache_type}")
+
 
 
 def main() -> None:
@@ -37,11 +41,12 @@ def main() -> None:
     parser.add_argument("--model_name", default="distilgpt2")
     parser.add_argument("--max_ctx", type=int, default=512, help="Token budget for context")
     parser.add_argument(
-        "--cache",
-        default="sliding",
-        choices=["none", "sliding", "paged"],
-        help="Cache strategy",
-    )
+    "--cache",
+    default="sliding",
+    choices=["none", "sliding", "paged", "quantized"],  # <-- UPDATED
+    help="Cache strategy",
+)
+
     parser.add_argument(
         "--max_new_tokens", type=int, default=64, help="Tokens to generate per reply"
     )
@@ -81,7 +86,12 @@ def main() -> None:
             raise RuntimeError("Unexpected cache type")
 
         t0 = time.time()
-        reply = backend.generate(prompt, max_new_tokens=args.max_new_tokens)
+        reply = backend.generate(
+    prompt,
+    max_new_tokens=args.max_new_tokens,
+    kv_cache=cache     # <-- NEW, integrates quantized KV-cache
+)
+
         latency = time.time() - t0
 
         # metrics
