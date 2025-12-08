@@ -17,7 +17,7 @@ if CURRENT_DIR not in sys.path:
 from inference.transformers_backend import HFBackend
 from kv_cache.sliding_window import SlidingWindowCache
 from kv_cache.paged_cache import PagedCache
-from kv_cache.quantized_kv_cache import QuantizedKVCache   # <-- NEW
+from kv_cache.quantized_cache import QuantizedKVCache   # <-- NEW
 from utils.logger import JsonlLogger
 from utils.metrics import snapshot as metrics_snapshot
 
@@ -35,17 +35,16 @@ def build_cache(cache_type: str, max_ctx: int) -> Optional[object]:
     raise ValueError(f"Unknown cache type: {cache_type}")
 
 
-
 def main() -> None:
     parser = argparse.ArgumentParser(description="CLI chatbot with KV-cache strategies")
     parser.add_argument("--model_name", default="distilgpt2")
     parser.add_argument("--max_ctx", type=int, default=512, help="Token budget for context")
     parser.add_argument(
-    "--cache",
-    default="sliding",
-    choices=["none", "sliding", "paged", "quantized"],  # <-- UPDATED
-    help="Cache strategy",
-)
+        "--cache",
+        default="sliding",
+        choices=["none", "sliding", "paged", "quantized"],  # <-- UPDATED
+        help="Cache strategy",
+    )
 
     parser.add_argument(
         "--max_new_tokens", type=int, default=64, help="Tokens to generate per reply"
@@ -58,7 +57,7 @@ def main() -> None:
     parser.add_argument(
         "--prompts",
         type=str,
-        default="What is a Raspberry Pi?|Explain KV-cache in transformers in 2 sentences.|Describe sliding-window vs paged cache.",
+        default="What is a Raspberry Pi?|Explain Transformer architecture in neural network.|Describe sliding-window vs paged cache vs quantized Cache.",
         help="Benchmark prompts separated by '|'",
     )
     args = parser.parse_args()
@@ -77,20 +76,28 @@ def main() -> None:
     def run_one_turn(user_text: str) -> str:
         nonlocal peak_rss, total_tokens, total_latency
 
-        # Build prompt according to cache strategy
+        # Build prompt depending on cache type
         if cache is None:
+            # No cache → simple 1-turn prompt
             prompt = f"User: {user_text}\nAssistant:"
+
         elif isinstance(cache, SlidingWindowCache) or isinstance(cache, PagedCache):
+            # Text-based caches → build textual context
             prompt = cache.build_prompt(backend, user_text)
+
+        elif isinstance(cache, QuantizedKVCache):
+            # Quantized KV-cache does NOT manage text history → use 1-turn prompt
+            prompt = f"User: {user_text}\nAssistant:"
+
         else:
-            raise RuntimeError("Unexpected cache type")
+            raise RuntimeError(f"Unexpected cache type: {type(cache)}")
 
         t0 = time.time()
         reply = backend.generate(
-    prompt,
-    max_new_tokens=args.max_new_tokens,
-    kv_cache=cache     # <-- NEW, integrates quantized KV-cache
-)
+            prompt,
+            max_new_tokens=args.max_new_tokens,
+            kv_cache=cache     # <-- NEW, integrates quantized KV-cache
+        )
 
         latency = time.time() - t0
 
@@ -104,8 +111,11 @@ def main() -> None:
         peak_rss = max(peak_rss, rss_mb)
 
         # update cache conversation state
-        if cache is not None:
+        # Update cache state only for text-based caches
+        if isinstance(cache, (SlidingWindowCache, PagedCache)):
             cache.add_turn(user_text, reply)
+# QuantizedKVCache does NOT maintain text history → skip
+
 
         # logging
         logger.log(
