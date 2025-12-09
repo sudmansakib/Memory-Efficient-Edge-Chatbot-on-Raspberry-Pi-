@@ -1,0 +1,369 @@
+\documentclass[conference]{IEEEtran}
+
+\usepackage{amsmath}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{listings}
+\usepackage{cite}
+\usepackage{url}
+\usepackage{color}
+
+\begin{document}
+
+\title{Memory-Efficient Edge Chatbot implementation on Raspberry Pi}
+
+\author{
+    \IEEEauthorblockN{Sudman Sakib, Ian Penrod, Suhong Gu, Sai Kiran}
+    \IEEEauthorblockA{
+        Department of Electrical and Computer Engineering \\
+        The University of Texas at San Antonio 
+    }
+}
+
+\maketitle
+
+\begin{abstract}
+This report presents the design, implementation, and evaluation of a memory-efficient Transformer-based chatbot deployed on a Raspberry~Pi. We investigate multiple KV-cache strategies-sliding-window and paged caches and evaluate their effect on latency, throughput, and memory usage. A benchmarking framework was developed to collect quantitative performance data, and a lightweight chatbot interface was integrated for interactive testing. Results show that cache-aware optimizations significantly reduce memory footprint and improve inference feasibility on low-power hardware, while overall performance remains compute-bound on the Raspberry~Pi CPU.
+\end{abstract}
+
+\section{Introduction}
+Recent advances in Transformer-based language models have enabled interactive chatbots with strong contextual reasoning. Deploying these models on embedded devices, however, is challenging due to strict memory and compute limitations. The KV-cache mechanism plays a central role in enabling efficient autoregressive inference, but its memory footprint grows linearly with sequence length. This project investigates how cache-aware strategies can reduce memory usage and improve performance on constrained hardware.
+
+The objective is to implement and benchmark multiple cache strategies, deploy a quantized Transformer on the Raspberry~Pi, and analyze performance trade-offs across latency, memory usage, and throughput.
+
+\section{System Overview}
+
+\subsection{Hardware Specifications}
+A Raspberry~Pi (model and version) was used for deployment. System characteristics include:
+
+\begin{itemize}
+    \item CPU: Quad-core ARM Cortex-A72 (or model)
+    \item RAM: 4GB (or version)
+    \item Storage: 256GB SSD (USB attached)
+    \item OS: Raspberry Pi OS (64-bit)
+\end{itemize}
+
+\subsection{Software Architecture}
+Figure~\ref{fig:system_diagram} illustrates the overall architecture, including:
+
+\begin{itemize}
+    \item HuggingFace/llama.cpp inference engine
+    \item KV-cache module (sliding/paged/quantized)
+    \item CLI or FastAPI-based chatbot interface
+    \item Benchmarking and logging subsystem
+\end{itemize}
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=0.95\columnwidth]{figures/system_diagram.png}
+    \caption{System architecture for memory-efficient inference.}
+    \label{fig:system_diagram}
+\end{figure}
+
+\section{Background: KV-Cache in Transformer Inference}
+Transformers generate tokens autoregressively. For each new token, self-attention requires computing key/value (KV) representations over all previous tokens. The KV-cache stores previously computed keys and values to avoid recomputation, reducing complexity from quadratic to linear.
+
+However, the KV-cache grows linearly with context length, creating a memory bottleneck on embedded devices. Cache-aware strategies are therefore essential to bound memory usage.
+
+\section{Methods}
+This section describes experimental methodology for evaluating cache strategies.
+
+\subsection{Baseline Model and Setup}
+A pretrained DistilGPT2 model was used for Phase~1. Inference was verified with no cache enabled, and baseline metrics (latency, tokens/sec, memory usage) were recorded.
+
+\subsection{Cache Strategies Implemented}
+\begin{enumerate}
+    \item \textbf{No Cache (Baseline)}: Full context, no trimming.
+    \item \textbf{Sliding-Window Cache}: Retains last $N$ tokens, discards older ones.
+    \item \textbf{Paged Cache}: Maintains last $K$ conversational turns.
+    \item \textbf{Quantized KV-cache (Optional)}: KV tensors compressed to INT8.
+\end{enumerate}
+
+Each strategy is integrated into the inference loop as part of the CLI chatbot.
+
+\subsection{Benchmark Prompts}
+All cache variants were evaluated using identical prompts:
+
+\begin{itemize}
+    \item ``Explain Transformer architecture in neural network.''
+    \item ``What is a Raspberry Pi?''
+    \item ``Describe sliding-window vs paged cache vs quantized Cache.''
+\end{itemize}
+
+\subsection{Measurement Procedure}
+Metrics recorded per run:
+
+\begin{itemize}
+    \item Latency (s)
+    \item Number of tokens generated
+    \item Tokens per second (throughput)
+    \item Peak RSS memory (MB)
+\end{itemize}
+\begin{table}[h!]
+\centering
+\small
+\begin{tabular}{l l l}
+\hline
+\textbf{Metric} & Meaning & Importance \\
+\hline
+latency  & Total generation time & Responsiveness \\
+tokens   & Output token count & Response length \\
+tokens/s & Tokens per second & Inference speed \\
+rss      & RAM usage (MB) & Memory efficiency \\
+\hline
+\end{tabular}
+\caption{Evaluation metrics used in performance analysis.}
+\end{table}
+
+
+Each experiment was repeated three times for averaging.
+
+\section{Phase 2 Results}
+\subsection{Interpretation of Baseline CPU Results Using Fixed Prompts}
+
+The baseline CPU benchmarks reveal that the memory footprint of DistilGPT-2 is dominated by its model parameters rather than by the KV-cache. As a result, all cache strategies produce relatively similar peak RSS values, ranging from approximately 648~MB to 694~MB. Sliding-window and paged caches exhibit slightly higher memory usage due to temporary prompt-construction overhead and additional tokenizer operations, whereas the quantized KV-cache reduces KV tensor size but yields only marginal RSS improvements because KV tensors represent a small fraction of total memory on a high-RAM desktop system.
+\begin{table}[h!]
+\centering
+\small
+\begin{tabular}{lcccc}
+\hline
+\textbf{Cache Type} & \textbf{Peak RSS (MB)} & \textbf{Latency/Token (s)} & \textbf{Tokens/s} \\
+\hline
+None        & 648.05 & 0.0233 & 42.99 \\
+Sliding     & 693.80 & 0.0218 & 45.86 \\
+Paged       & 693.84 & 0.0231 & 43.30 \\
+Quantized   & 653.15 & 0.0250 & 39.98 \\
+\hline
+\end{tabular}
+\caption{Baseline CPU benchmark results for fixed prompts under different cache strategies.}
+\end{table}
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=\columnwidth]{Tokens_sec vs Cache Type_cpu.png}
+    \caption{Tokens per second for baseline CPU across cache strategies using fixed prompts.
+    Sliding-window cache achieves the highest throughput, while quantized KV-cache is slower due to 
+    quantization overhead.}
+    \label{fig:tokens-sec-cpu}
+\end{figure}
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=\columnwidth]{Peak RSS vs Cache Type_cpu.png}
+    \caption{Peak RSS (MB) for baseline CPU across cache strategies using fixed prompts. 
+    Quantized KV-cache shows only minor reductions because model weights dominate total memory.}
+    \label{fig:peak-rss-cpu}
+\end{figure}
+
+In terms of runtime performance, the sliding-window cache achieves the highest throughput ($\approx 45.9$~tokens/s), likely due to more consistent prompt lengths during generation. The paged cache exhibits performance similar to the baseline ($\approx 43.3$~tokens/s), reflecting low but non-negligible overhead from turn-level management. The quantized KV-cache introduces additional computation for quantization and de-quantization during each decoding step, resulting in the lowest throughput ($\approx 40$~tokens/s). 
+
+\subsection{Interpretation of Baseline CPU Results in Interactive Mode}
+
+Interactive testing on the baseline CPU provides additional insight into the runtime behavior of the four cache strategies during multi-turn conversation. In the ``none'' mode, the model generates responses without retaining conversational context, resulting in a throughput of approximately 108~tokens/s and a latency of 0.590~s for a typical response. Memory usage remains stable at roughly 1.58~GB, consistent with the footprint of the DistilGPT-2 model and its tokenizer.
+
+With the sliding-window cache enabled, throughput improves noticeably to approximately 133~tokens/s, accompanied by a reduction in latency to 0.482~s. This improvement stems from the sliding-window mechanism maintaining a compact, recent context that reduces prompt reconstruction overhead while preserving short-term conversational continuity. The paged cache exhibits intermediate performance, achieving around 117~tokens/s with similar memory consumption. This reflects the additional turn-level bookkeeping required for paged history management, which introduces modest overhead relative to the sliding-window strategy.
+
+The quantized KV-cache demonstrates a markedly different behavior. Latency increases substantially to 1.646~s, and throughput decreases to approximately 38.9~tokens/s, reflecting the computational overhead of quantizing and dequantizing key/value tensors at each decoding step. However, this cost is accompanied by a significant reduction in peak memory usage, lowering RSS from roughly 1.58~GB to 1.29~GB. On a desktop CPU with ample RAM, this memory reduction is not critical, but it highlights the value of quantized caching in resource-constrained environments such as the Raspberry~Pi. 
+\begin{table}[h!]
+\centering
+\small
+\begin{tabular}{lccc}
+\hline
+\textbf{Cache Type} & \textbf{Latency (s)} & \textbf{Tokens/s} & \textbf{Peak RSS (MB)} \\
+\hline
+None        & 0.590 & 108.49 & 1577.8 \\
+Sliding     & 0.482 & 132.83 & 1578.4 \\
+Paged       & 0.537 & 117.38 & 1576.9 \\
+Quantized   & 1.646 & 38.88  & 1289.0 \\
+\hline
+\end{tabular}
+\caption{Interactive-mode CPU results across cache strategies.}
+\label{tab:cpu-interactive-results}
+\end{table}
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=\columnwidth]{tokens_sec_vs_cache_cpu_interactive.png}
+    \caption{Tokens per second in interactive mode on baseline CPU. Sliding-window cache offers the best throughput; quantized KV-cache incurs overhead due to repeated quantization and de-quantization operations.}
+    \label{fig:tokens-sec-cpu-interactive}
+\end{figure}
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=\columnwidth]{peak_rss_vs_cache_cpu_interactive.png}
+    \caption{Peak RSS (MB) in interactive mode on baseline CPU across cache strategies. Quantized KV-cache reduces memory footprint significantly compared to text-based caches.}
+    \label{fig:peak-rss-cpu-interactive}
+\end{figure}
+
+Interactive-mode results therefore reinforce the trade-offs observed in fixed-prompt benchmarks: text-based caches primarily affect latency and throughput, while quantized caching delivers meaningful memory savings at the cost of compute overhead. 
+\begin{table}[h!]
+\centering
+\small
+\begin{tabular}{l}
+\hline
+\textbf{Command} \\
+\hline
+\texttt{python -m venv .venv} \\
+\texttt{source .venv/bin/activate} \\
+\texttt{pip install -r requirements.txt} \\
+\texttt{python src/app cli.py --cache sliding} \\
+\texttt{python src/app cli.py --cache paged} \\
+\texttt{python src/app cli.py --cache none} \\
+\hline
+\end{tabular}
+\caption{Commands used to set up and run the chatbot.}
+\end{table}
+
+
+\subsection{Interpretation of Raspberry Pi Results Using Fixed Prompts}
+
+The fixed-prompt evaluations on the Raspberry~Pi reveal clear distinctions in memory behavior and latency across the four cache strategies, although throughput remains broadly similar due to the device's limited computational capacity. The baseline configuration yields a peak RSS of 685~MB and a throughput of 8.74~tokens/s, serving as the reference point for subsequent comparisons. 
+\begin{table}[h!]
+\centering
+\small
+\begin{tabular}{lccc}
+\hline
+\textbf{Cache Type} & \textbf{Peak RSS (MB)} & \textbf{Latency/Token (s)} & \textbf{Tokens/s} \\
+\hline
+None        & 685.38 & 0.1145 & 8.74 \\
+Sliding     & 701.83 & 0.1175 & 8.51 \\
+Paged       & 701.72 & 0.1150 & 8.70 \\
+Quantized   & 691.58 & 0.1179 & 8.48 \\
+\hline
+\end{tabular}
+\caption{Raspberry~Pi fixed-prompt benchmark results across cache strategies.}
+\label{tab:pi-fixed-prompt}
+\end{table}
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=\columnwidth]{tokens_sec_vs_cache_pi_fixed.png}
+    \caption{Tokens per second on Raspberry~Pi under fixed-prompt evaluation. Throughput remains similar across cache types, with quantized caching slightly slower due to additional quantization overhead.}
+    \label{fig:pi-fixed-tokens}
+\end{figure}
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=\columnwidth]{peak_rss_vs_cache_pi_fixed.png}
+    \caption{Peak RSS on Raspberry~Pi for fixed-prompt evaluation across cache strategies. Sliding and paged caches incur higher memory usage due to prompt reconstruction overhead, while quantized KV-cache offers a modest reduction.}
+    \label{fig:pi-fixed-rss}
+\end{figure}
+
+Both the sliding-window and paged caches show noticeably higher memory usage, with peak RSS values of approximately 702~MB. This increase is attributable to additional prompt reconstruction and tokenization overhead that occurs during decoding. Since the Pi's memory subsystem is relatively constrained, these extra operations manifest as a measurable rise in RSS, despite no substantial change in the underlying model or KV-cache size. Throughput for these two strategies remains close to the baseline (8.51~tokens/s and 8.70~tokens/s), indicating that their primary impact lies in memory overhead rather than computational cost.
+
+The quantized KV-cache demonstrates a more nuanced behavior. With an RSS of 691.6~MB, it consumes slightly more memory than the baseline but less than the sliding or paged caches. This reflects the trade-off inherent to quantization: while key/value tensors are compressed, the process introduces temporary quantization and dequantization tensors that offset the expected memory savings in single-turn evaluation. Throughput is marginally lower (8.48~tokens/s), consistent with the additional overhead introduced by quantized tensor operations. 
+
+Overall, the fixed-prompt results show that prompt-based caches (sliding and paged) impose moderate memory overhead on the Pi, whereas quantized KV-caching reduces this additional cost but does not outperform the baseline in single-turn settings. The advantages of quantization are expected to emerge more strongly in multi-turn scenarios, where KV tensors persist across generations and compression yields more meaningful reductions in memory footprint.
+
+
+\subsection{Interpretation of Raspberry Pi Results in Interactive Mode}
+
+Interactive testing on the Raspberry~Pi reveals a consistent performance profile across all four cache strategies, with latency values concentrated around 7.2--7.4~seconds for a 64-token generation and throughput remaining close to 8.7~tokens/s. These results demonstrate that, on the Pi's constrained CPU, the dominant factors influencing runtime are model forward-pass computation and Python-level overhead rather than the choice of cache strategy.
+\begin{table}[h!]
+\centering
+\small
+\begin{tabular}{lcc}
+\hline
+\textbf{Cache Type} & \textbf{Tokens/s} & \textbf{Peak RSS (MB)} \\
+\hline
+None        & 8.77 & 685.1 \\
+Sliding     & 8.80 & 684.8 \\
+Paged       & 8.85 & 685.1 \\
+Quantized   & 8.71 & 686.1 \\
+\hline
+\end{tabular}
+\caption{Interactive-mode performance on Raspberry~Pi across cache strategies.}
+\label{tab:pi-interactive-results}
+\end{table}
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=\columnwidth]{tokens_sec_vs_cache_pi.png}
+    \caption{Tokens per second on the Raspberry~Pi for each cache strategy during interactive-mode inference. Throughput remains nearly constant (8.7--8.9~tokens/s), indicating that decoding on the Pi is compute-bound and not significantly affected by cache strategy.}
+    \label{fig:tokens-sec-pi}
+\end{figure}
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=\columnwidth]{peak_rss_vs_cache_pi.png}
+    \caption{Peak RSS (MB) across cache strategies on the Raspberry~Pi during interactive-mode evaluation. Memory usage remains stable across the ``none'', sliding-window, and paged caches, while the quantized KV-cache shows a slight increase due to tensor quantization overhead.}
+    \label{fig:peak-rss-pi}
+\end{figure}
+
+
+The ``none'' configuration establishes the baseline, achieving approximately 8.77~tokens/s with a peak RSS of 685~MB. Both the sliding-window and paged-cache strategies yield nearly identical performance, with throughput measurements of 8.80 and 8.85~tokens/s, respectively, and RSS values of roughly 685~MB. This behavior is expected because sliding-window and paged caches operate primarily on text-based prompt reconstruction, which introduces negligible overhead relative to total generation cost. Furthermore, in single-turn interactive queries, these caches do not significantly modify the effective context length and therefore do not meaningfully affect execution time or memory usage.
+
+The quantized KV-cache exhibits similar latency (7.345~s) and slightly lower throughput (8.71~tokens/s), while memory usage increases marginally to 686~MB. As with the fixed-prompt memory sweep, this overhead arises from the quantization and dequantization operations executed at each decoding step. In single-turn interactions where KV tensors are not reused across turns, the benefits of KV compression do not offset these additional costs. Nevertheless, in multi-turn conversations—where past key/value tensors persist between turns—the quantized cache is expected to yield more substantial memory savings, particularly under longer context windows. Overall, the interactive Pi results confirm that compute cost dominates performance in short conversational exchanges, while the advantages of KV-cache optimization become more apparent in extended multi-turn workloads typical of chatbot operation.
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=\columnwidth]{cpu_vs_pi_comparison.png}
+    \caption{Comparison of CPU and Raspberry~Pi performance for fixed-prompt decoding across cache strategies.}
+    \label{fig:cpu-vs-pi}
+\end{figure}
+
+
+
+
+
+\section{Phase 4 Analysis}
+
+\subsection{Baseline vs Optimized}
+Although all cache strategies yield similar peak memory on small models, cache-aware trimming prevents unbounded KV-cache growth in multi-turn conversations and longer contexts.
+
+\subsection{Memory Consumption vs. Sequence Length (CPU)}
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=\columnwidth]{memory_vs_length_cpu_all.png}
+    \caption{Peak RSS on baseline CPU as a function of generated sequence length for four cache strategies. Memory usage grows with sequence length due to KV-cache expansion, while quantized caching shows a higher overhead on CPU because its quantization tensors outweigh KV savings.}
+    \label{fig:memory-vs-length-cpu-all}
+\end{figure}
+
+Figure~\ref{fig:memory-vs-length-cpu-all} illustrates how peak memory usage scales with generated sequence length for four cache strategies on the baseline CPU. Across all configurations, memory consumption increases gradually as sequence length grows, reflecting the accumulation of past key/value (KV) tensors inherent to autoregressive decoding. Because DistilGPT-2's model parameters dominate the overall memory footprint, the KV-cache contributes only a small relative increase, resulting in a shallow upward trend in all curves.
+
+\paragraph{None (Baseline)}
+The baseline configuration demonstrates the expected linear growth in memory consumption as sequence length increases, reflecting the accumulation of KV-cache tensors during decoding. Since model weights account for the majority of total RAM usage, the slope of this curve is modest but consistent. This baseline memory profile serves as a reference against which the optimized cache strategies can be compared.
+
+\paragraph{Sliding Window Cache}
+The sliding-window cache exhibits a memory curve nearly identical to the baseline. Because this experiment evaluates a single prompt per sequence-length setting, no multi-turn accumulation occurs; therefore, the sliding-window mechanism never engages its truncation behavior. Memory usage remains dominated by model parameters, with only minor overhead introduced by prompt reconstruction and tokenization. As a result, sliding-window caching does not substantially alter peak RSS under these conditions.
+
+\paragraph{Paged Cache}
+The paged cache likewise mirrors the baseline memory trajectory. Paged caching is designed to restrict long-term conversational history by retaining only a fixed number of turns; however, under fixed-prompt evaluation, turn-level management does not activate. Small variations in initial memory readings stem from operating system allocation behavior rather than from algorithmic differences. The overall slope remains nearly identical to that of the baseline, confirming that paged caching has limited impact on memory consumption when not engaged in multi-turn interaction.
+
+\paragraph{Quantized KV-Cache}
+Although quantized KV-caching is intended to reduce the memory footprint of stored key/value tensors, the CPU results exhibit a slightly steeper memory curve. This behavior arises because each evaluation run performs fresh generation without reusing KV-cache across turns, resulting in additional temporary tensors associated with quantization and dequantization operations. On a high-RAM desktop system, the KV-cache forms only a small fraction of total memory; thus, the quantization overhead outweighs its storage benefits. This contrasts with embedded systems such as the Raspberry~Pi, where KV tensors represent a proportionally larger share of total memory and quantization yields more substantial benefits.
+
+\subsection{Memory Consumption vs. Sequence Length (Pi)}
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=\columnwidth]{memory_vs_length_pi_all.png}
+    \caption{Memory consumption (RSS) on Raspberry~Pi as a function of generated sequence length for all cache strategies. The baseline, sliding, and paged caches exhibit nearly identical memory profiles, while quantized KV-cache shows increased overhead in single-turn generation due to quantization operations.}
+    \label{fig:memory-vs-length-pi-all}
+\end{figure}
+
+Figure~\ref{fig:memory-vs-length-pi-all} presents the memory scaling behavior of the Raspberry~Pi as sequence length increases across the four cache strategies. Compared to the desktop CPU results, the Pi demonstrates a much tighter memory profile because its software stack and model footprint occupy significantly less RAM at initialization. The baseline, sliding-window, and paged-cache configurations all exhibit nearly identical memory curves, with RSS remaining close to 684~MB for sequence lengths up to 128 tokens and rising modestly to approximately 691~MB at 256 tokens. This indicates that on the Pi, prompt-based caches have minimal influence on memory scaling, as their operations occur primarily in CPU-held text buffers rather than in large tensor structures.
+
+ Although quantization is intended to reduce the memory cost of storing past key/value tensors, the Pi results, particularly at longer sequences, reach approximately 717~MB at 256 tokens. This behavior is expected in single-turn generation: KV tensors are recreated and quantized at each token step, causing additional temporary allocations that temporarily outweigh the benefits of compression. in multi-turn real conversations, quantized caching does reduce memory on Pi, because KV tensors are reused rather than recreated. Overall, these results show that while prompt-based caches have minimal effect on memory scaling during isolated generation, KV-cache quantization can offer memory savings under realistic, multi-turn workloads typical of edge-device inference.
+
+
+\subsection{Compute-Bound vs Memory-Bound Behavior}
+The Raspberry~Pi exhibits compute-bound characteristics:
+
+\begin{itemize}
+    \item Large RAM reductions do not greatly change tokens/sec.
+    \item Latency remains dominated by CPU compute per token.
+    \item Laptop performance is far higher despite same cache strategies.
+\end{itemize}
+
+Thus, inference speed is limited more by ARM CPU throughput than by memory bandwidth.
+
+\subsection{Memory vs Speed Trade-offs}
+Sliding and paged caches reduce KV-cache growth and stabilize memory usage during multi-turn conversations. This allows the Pi to run chatbots without exceeding RAM limits. However, speed improvements are modest because compute remains the primary bottleneck.
+
+\section{Discussion}
+Results show that cache-aware inference enables chatbots to run reliably on a Raspberry~Pi, but performance remains constrained by CPU capabilities. Quantization and optimized backends (e.g., llama.cpp with GGUF models) offer larger performance gains. Future work may include hardware acceleration, model pruning, or migrating inference to micro-LLMs tuned for embedded systems.
+
+\section{Conclusion}
+We successfully deployed a memory-efficient chatbot on a Raspberry~Pi and demonstrated the effects of KV-cache strategies on performance. Our results confirm that while cache trimming reduces memory usage, compute-bound behavior limits speed gains. Nonetheless, the caching framework provides a practical foundation for running Transformers on low-power devices.
+
+\bibliographystyle{IEEEtran}
+\bibliography{references}
+
+\end{document}
