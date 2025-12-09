@@ -4,18 +4,15 @@ A small LLM chatbot running fully on a Raspberry Pi, with memory-aware context m
 This repository implements a Transformer-based chatbot optimized for low-memory inference on a Raspberry Pi.  
 This project follows the requirements of the Embedded Systems for AI course.
 
-## Repository Status
-Currently under development.  
-Core folder structure is ready; code will be added progressively.
+This project demonstrates how to deploy a small LLM (e.g., DistilGPT-2) on a memory-constrained edge device such as the Raspberry Pi.  
+To support long-form interaction on limited hardware, several optimized KV-cache strategies are implemented:
 
-## Project Goals
-- Deploy a small Transformer model (TinyLlama / DistilGPT2 / Phi-1.5 INT8)
-- Implement memory-efficient KV-cache strategies:
-  - Sliding Window
-  - Paged / Ring Cache
-  - Quantized Cache (INT8 K/V)
-- Build CLI or Web chatbot UI
-- Benchmark latency, tokens/sec, RAM usage, and performance
+- **Sliding-Window Cache** — retains only the last *N* tokens  
+- **Paged / Ring Cache** — retains the last *K* dialogue turns  
+- **Quantized KV-Cache (INT8)** — compresses K/V tensors to reduce RAM growth  
+
+A custom inference backend enables token-by-token generation, cache injection, and detailed performance measurement.
+
 
 ## Getting Started
 ```bash
